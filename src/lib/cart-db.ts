@@ -213,13 +213,13 @@ export function mergeCartItems(existingItems: CartItem[], guestItems: CartItem[]
     );
 
     if (existingIndex !== -1) {
-      // Sum quantities and cap by stock if known
+      // Maintain the customer's desired quantity rather than multiplying/doubling
       const current = merged[existingIndex];
       const maxStock = current.product.sizes?.find((s) => s.size === current.selectedSize)?.stockCount || 50;
-      const combinedQty = Math.min(maxStock, current.quantity + guestItem.quantity);
+      const safeQty = Math.min(maxStock, Math.max(current.quantity, guestItem.quantity));
       merged[existingIndex] = {
         ...current,
-        quantity: combinedQty,
+        quantity: safeQty,
       };
     } else {
       merged.push({

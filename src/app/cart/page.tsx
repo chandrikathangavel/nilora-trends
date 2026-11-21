@@ -52,7 +52,8 @@ export default function CartPage() {
   // Validate cart inventory and prices against server on page load
   useEffect(() => {
     validateCartWithServer();
-  }, [validateCartWithServer]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -233,7 +234,7 @@ export default function CartPage() {
                     <div className="flex items-center justify-between w-full sm:w-auto sm:gap-6 border-t sm:border-t-0 pt-3 sm:pt-0">
                       <div className="flex items-center border border-[#E8D6C7] rounded-xl bg-[#FAF7F2] overflow-hidden">
                         <button
-                          onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                          onClick={() => updateQuantity(item.id, (q) => q - 1)}
                           className="px-3 py-1.5 text-xs font-semibold hover:bg-[#E8D6C7] text-[#392820] transition-colors"
                           aria-label="Decrease quantity"
                         >
@@ -243,7 +244,7 @@ export default function CartPage() {
                           {item.quantity}
                         </span>
                         <button
-                          onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                          onClick={() => updateQuantity(item.id, (q) => q + 1)}
                           className="px-3 py-1.5 text-xs font-semibold hover:bg-[#E8D6C7] text-[#392820] transition-colors"
                           aria-label="Increase quantity"
                         >

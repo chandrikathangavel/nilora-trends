@@ -33,7 +33,7 @@ interface CartContextType {
     quantity?: number
   ) => { success: boolean; error?: string };
   removeFromCart: (itemId: string) => void;
-  updateQuantity: (itemId: string, quantity: number) => void;
+  updateQuantity: (itemId: string, quantityOrUpdater: number | ((prevQty: number) => number)) => void;
   clearCart: () => void;
   syncGuestCart: (userCartItems?: CartItem[]) => void;
   validateCartWithServer: () => Promise<void>;
@@ -71,19 +71,44 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const prevUserIdRef = useRef<string | undefined>(undefined);
   const isInitializedRef = useRef<boolean>(false);
+  const cartRef = useRef<CartItem[]>(cart);
+  const isValidatingRef = useRef<boolean>(false);
+
+  // Keep cartRef synchronized with latest cart state
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
 
   // Initial load from localStorage on client mount
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(GUEST_CART_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setCart(parsed);
+      let cachedUserId: string | null = null;
+      try {
+        const storedUser = localStorage.getItem('nilora_current_user');
+        if (storedUser) {
+          cachedUserId = JSON.parse(storedUser)?.id || null;
+        }
+      } catch {}
+
+      if (cachedUserId) {
+        const storedUserCart = localStorage.getItem(`nilora_cart_${cachedUserId}`);
+        if (storedUserCart) {
+          const parsed = JSON.parse(storedUserCart);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setCart(parsed);
+          }
+        }
+      } else {
+        const stored = localStorage.getItem(GUEST_CART_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setCart(parsed);
+          }
         }
       }
     } catch (e) {
-      console.error('Failed to load guest cart from localStorage:', e);
+      console.error('Failed to load initial cart from localStorage:', e);
     }
     isInitializedRef.current = true;
   }, []);
@@ -95,15 +120,22 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         prevUserIdRef.current = userId;
 
         // Patron just signed in: fetch their persistent DB cart
-        const guestItems = [...cart];
         const dbItems = await fetchUserCartFromDb(userId);
+
+        // Read ACTUAL unauthenticated guest cart from storage (not the in-memory cart)
+        let guestItems: CartItem[] = [];
+        try {
+          const rawGuest = localStorage.getItem(GUEST_CART_STORAGE_KEY);
+          if (rawGuest) {
+            guestItems = JSON.parse(rawGuest) || [];
+          }
+        } catch {}
 
         if (guestItems.length > 0) {
           // Merge guest cart with user DB cart
           const merged = mergeCartItems(dbItems, guestItems);
           setCart(merged);
           await saveUserCartToDb(userId, merged);
-          // Clean guest cart once safely merged
           try {
             localStorage.removeItem(GUEST_CART_STORAGE_KEY);
           } catch {}
@@ -131,7 +163,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === 'undefined' || !isInitializedRef.current) return;
 
     if (userId) {
-      saveUserCartToDb(userId, cart);
+      try {
+        localStorage.setItem(`nilora_cart_${userId}`, JSON.stringify(cart));
+      } catch {}
+
+      // Debounce remote DB sync so rapid clicks don't flood or cause race conditions
+      const timer = setTimeout(() => {
+        saveUserCartToDb(userId, cart);
+      }, 400);
+      return () => clearTimeout(timer);
     } else {
       try {
         localStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify(cart));
@@ -143,12 +183,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   // Server-side Cart & Inventory Validation
   const validateCartWithServer = useCallback(async () => {
-    if (cart.length === 0) return;
+    const currentCart = cartRef.current;
+    if (currentCart.length === 0 || isValidatingRef.current) return;
 
+    isValidatingRef.current = true;
     setIsValidating(true);
     try {
       const payload = {
-        items: cart.map((item) => ({
+        items: currentCart.map((item) => ({
           id: item.id,
           productId: item.product.id,
           size: item.selectedSize,
@@ -168,22 +210,40 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const data = await res.json();
 
       if (data.valid && Array.isArray(data.items)) {
-        // Update items with server-verified prices & quantities
+        // Update items with server-verified prices & availability without overriding user's latest in-flight quantity
         setCart((prev) => {
-          return prev.map((curr) => {
+          let hasChanges = false;
+          const updated = prev.map((curr) => {
             const verified = data.items.find((v: any) => v.id === curr.id);
             if (!verified) return curr;
 
-            return {
-              ...curr,
-              quantity: Math.max(1, verified.quantity),
-              product: {
-                ...curr.product,
-                price: verified.unitPrice,
-                inStock: verified.inStock,
-              },
-            };
+            // Only reduce quantity if server inventory strictly cannot fulfill it
+            let safeQuantity = curr.quantity;
+            if (verified.maxStock !== undefined && verified.maxStock > 0 && curr.quantity > verified.maxStock) {
+              safeQuantity = verified.maxStock;
+            }
+
+            const priceChanged = curr.product.price !== verified.unitPrice;
+            const stockChanged = curr.product.inStock !== verified.inStock;
+            const qtyChanged = curr.quantity !== safeQuantity;
+
+            if (priceChanged || stockChanged || qtyChanged) {
+              hasChanges = true;
+              return {
+                ...curr,
+                quantity: safeQuantity,
+                product: {
+                  ...curr.product,
+                  price: verified.unitPrice,
+                  inStock: verified.inStock,
+                },
+              };
+            }
+
+            return curr;
           });
+
+          return hasChanges ? updated : prev;
         });
 
         if (data.notices && data.notices.length > 0) {
@@ -193,9 +253,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.warn('Cart server validation warning:', err);
     } finally {
+      isValidatingRef.current = false;
       setIsValidating(false);
     }
-  }, [cart]);
+  }, []);
 
   // Re-validate coupon if cart total changes
   useEffect(() => {
@@ -319,26 +380,33 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setCart((prev) => prev.filter((item) => item.id !== itemId));
   };
 
-  // Update quantity (strictly prevents zero, negative, or invalid quantities)
-  const updateQuantity = (itemId: string, quantity: number) => {
-    if (quantity <= 0) {
-      removeFromCart(itemId);
-      return;
-    }
+  // Update quantity (supports functional updaters to prevent stale closures and sequential click glitches)
+  const updateQuantity = (
+    itemId: string,
+    quantityOrUpdater: number | ((prevQty: number) => number)
+  ) => {
+    setCart((prev) => {
+      const targetItem = prev.find((item) => item.id === itemId);
+      if (!targetItem) return prev;
 
-    const safeQty = Math.floor(quantity);
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.id === itemId) {
-          // Check inventory limit if known
-          const sizeInfo = item.product.sizes?.find((s) => s.size === item.selectedSize);
-          const maxStock = sizeInfo?.stockCount || 50;
-          const cappedQty = Math.min(maxStock, safeQty);
-          return { ...item, quantity: cappedQty };
-        }
-        return item;
-      })
-    );
+      const targetQty =
+        typeof quantityOrUpdater === 'function'
+          ? quantityOrUpdater(targetItem.quantity)
+          : quantityOrUpdater;
+
+      if (targetQty <= 0) {
+        return prev.filter((item) => item.id !== itemId);
+      }
+
+      const safeQty = Math.floor(targetQty);
+      const sizeInfo = targetItem.product.sizes?.find((s) => s.size === targetItem.selectedSize);
+      const maxStock = sizeInfo?.stockCount || 50;
+      const cappedQty = Math.min(maxStock, safeQty);
+
+      return prev.map((item) =>
+        item.id === itemId ? { ...item, quantity: cappedQty } : item
+      );
+    });
   };
 
   const clearCart = () => {
