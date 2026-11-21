@@ -1299,36 +1299,22 @@ export default function CheckoutPage() {
                               <div className="flex items-center gap-2">
                                 <CreditCard className="w-4 h-4 text-[#D9A08C]" />
                                 <span className="font-semibold text-xs text-[#392820]">
-                                  Online Payment (Razorpay Gateway)
+                                  Online Payment (UPI, Cards, NetBanking)
                                 </span>
                               </div>
                               <span
                                 className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                                   isRazorpayConfigured
-                                    ? isRazorpayTestMode
-                                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                      : 'bg-emerald-100 text-emerald-800'
+                                    ? 'bg-emerald-100 text-emerald-800'
                                     : 'bg-neutral-200 text-neutral-600'
                                 }`}
                               >
-                                {isRazorpayConfigured
-                                  ? isRazorpayTestMode
-                                    ? 'Sandbox / Test Mode'
-                                    : 'Active'
-                                  : 'Razorpay Key Pending'}
+                                {isRazorpayConfigured ? 'Active' : 'Key Pending'}
                               </span>
                             </div>
                             <p className="text-[11px] text-[#735D50] leading-relaxed">
-                              Supports UPI (GPay, PhonePe, Paytm), Debit/Credit Cards &amp; NetBanking.
+                              Supports Instant UPI (GPay, PhonePe, Paytm, BHIM), Debit/Credit Cards &amp; NetBanking.
                             </p>
-                            {isRazorpayTestMode && (
-                              <div className="p-2 rounded-lg bg-amber-50/90 border border-amber-200/90 text-[11px] text-amber-900 flex items-start gap-1.5">
-                                <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                                <span>
-                                  <strong>Test Mode Active:</strong> You can test payments safely with Razorpay sandbox UPI (<code>success@razorpay</code>) and test cards without real bank deductions.
-                                </span>
-                              </div>
-                            )}
                             {!isRazorpayConfigured && (
                               <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-start gap-1.5">
                                 <Info className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
